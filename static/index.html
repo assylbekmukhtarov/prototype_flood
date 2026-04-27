@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Мониторинг паводков</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      display: flex;
+      height: 100vh;
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #f0f2f5;
+      color: #1a1d27;
+    }
+
+    /* ── Sidebar ─────────────────────────────────────────── */
+    #sidebar {
+      width: 340px;
+      min-width: 280px;
+      background: #ffffff;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      border-right: 1px solid #e2e5ed;
+      box-shadow: 2px 0 8px rgba(0,0,0,0.06);
+      z-index: 1000;
+    }
+
+    #sidebar-header {
+      padding: 18px 16px 14px;
+      border-bottom: 1px solid #e2e5ed;
+      background: #f8f9fb;
+    }
+    #sidebar-header h1 { font-size: 15px; font-weight: 700; color: #1a1d27; }
+    #sidebar-header p  { font-size: 12px; color: #6b7280; margin-top: 3px; }
+
+    #sidebar-body { padding: 14px 16px; flex: 1; }
+
+    .section-title {
+      font-size: 11px;
+      font-weight: 700;
+      color: #9ca3af;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      margin: 14px 0 7px;
+    }
+    .section-title:first-child { margin-top: 0; }
+
+    /* ── ROI block ───────────────────────────────────────── */
+    #roi-status {
+      background: #f8f9fb;
+      border: 1px solid #e2e5ed;
+      border-radius: 6px;
+      padding: 7px 10px;
+      font-size: 12px;
+      color: #6b7280;
+    }
+    #roi-status.has-roi { color: #4f7ef8; border-color: #c7d4fc; background: #f0f4ff; }
+    #roi-coords { font-size: 11px; color: #9ca3af; margin-top: 3px; word-break: break-all; }
+
+    /* ── Form ────────────────────────────────────────────── */
+    .form-group { margin-bottom: 9px; }
+    label { display: block; font-size: 12px; color: #6b7280; margin-bottom: 3px; font-weight: 500; }
+
+    input[type="date"],
+    input[type="number"] {
+      width: 100%;
+      background: #f8f9fb;
+      border: 1px solid #dde1ea;
+      border-radius: 6px;
+      padding: 7px 10px;
+      color: #1a1d27;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    input:focus { border-color: #4f7ef8; background: #fff; }
+
+    .row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+    /* ── Temperature chip ────────────────────────────────── */
+    #temp-chip {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      background: #eef2ff;
+      border: 1px solid #c7d4fc;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: 12px;
+      color: #3b5bdb;
+      margin-top: 4px;
+    }
+    #temp-chip .chip-val { font-weight: 700; font-size: 14px; }
+    #temp-chip .chip-src { font-size: 11px; color: #6b7280; margin-left: auto; }
+
+    /* ── Buttons ─────────────────────────────────────────── */
+    #btn-analyze {
+      width: 100%;
+      padding: 10px;
+      background: #4f7ef8;
+      border: none;
+      border-radius: 8px;
+      color: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 14px;
+      transition: background 0.2s, opacity 0.2s;
+    }
+    #btn-analyze:hover:not(:disabled) { background: #3a6ae0; }
+    #btn-analyze:disabled { background: #c7d0e0; color: #fff; cursor: not-allowed; opacity: 0.7; }
+
+    #btn-csv {
+      width: 100%;
+      padding: 8px;
+      background: #fff;
+      border: 1px solid #dde1ea;
+      border-radius: 8px;
+      color: #6b7280;
+      font-size: 13px;
+      cursor: pointer;
+      margin-top: 7px;
+      transition: border-color 0.2s, color 0.2s;
+    }
+    #btn-csv:hover:not(:disabled) { border-color: #4f7ef8; color: #4f7ef8; }
+    #btn-csv:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    /* ── Loader ──────────────────────────────────────────── */
+    #loader {
+      display: none;
+      text-align: center;
+      padding: 18px 0;
+      color: #9ca3af;
+      font-size: 13px;
+    }
+    .spinner {
+      width: 26px; height: 26px;
+      border: 3px solid #e2e5ed;
+      border-top-color: #4f7ef8;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 8px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #error-msg {
+      display: none;
+      background: #fff5f5;
+      border: 1px solid #fca5a5;
+      border-radius: 8px;
+      padding: 10px;
+      font-size: 12px;
+      color: #dc2626;
+      margin-top: 10px;
+    }
+
+    /* ── Results ─────────────────────────────────────────── */
+    #results { display: none; margin-top: 14px; }
+
+    .metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; margin-bottom: 10px; }
+    .metric-card {
+      background: #f8f9fb;
+      border: 1px solid #e2e5ed;
+      border-radius: 8px;
+      padding: 10px;
+    }
+    .metric-card .val { font-size: 19px; font-weight: 700; color: #1a1d27; }
+    .metric-card .lbl { font-size: 11px; color: #9ca3af; margin-top: 2px; }
+
+    .risk-card {
+      border-radius: 8px;
+      padding: 11px 13px;
+      margin-bottom: 10px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .risk-high { background: #fff5f5; border: 1px solid #fca5a5; color: #dc2626; }
+    .risk-low  { background: #f0fdf4; border: 1px solid #86efac; color: #16a34a; }
+
+    .condition-list { list-style: none; }
+    .condition-list li {
+      font-size: 12px;
+      padding: 4px 0;
+      color: #4b5563;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .dot.ok { background: #16a34a; }
+    .dot.no { background: #dc2626; }
+    .dot.na { background: #d1d5db; }
+
+    /* ── Legend ──────────────────────────────────────────── */
+    #legend {
+      position: absolute;
+      bottom: 28px;
+      right: 10px;
+      background: rgba(255,255,255,0.95);
+      border: 1px solid #e2e5ed;
+      border-radius: 8px;
+      padding: 10px 14px;
+      z-index: 999;
+      font-size: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    }
+    #legend .leg-title { font-weight: 700; color: #1a1d27; margin-bottom: 6px; }
+    #legend .leg-item  { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; color: #4b5563; }
+    #legend .swatch    { width: 14px; height: 14px; border-radius: 3px; }
+
+    /* ── Map ─────────────────────────────────────────────── */
+    #map { flex: 1; }
+  </style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<div id="sidebar">
+  <div id="sidebar-header">
+    <h1>Мониторинг снега и паводков</h1>
+    <p>Sentinel-2 · NDSI / MNDWI</p>
+  </div>
+
+  <div id="sidebar-body">
+
+    <div class="section-title">Область интереса</div>
+    <div id="roi-status">Используйте инструменты на карте для выбора области</div>
+    <div id="roi-coords"></div>
+
+    <div class="section-title">Снежный период</div>
+    <div class="row-2">
+      <div class="form-group">
+        <label>Начало</label>
+        <input type="date" id="date-snow-start" value="2024-02-01" />
+      </div>
+      <div class="form-group">
+        <label>Конец</label>
+        <input type="date" id="date-snow-end" value="2024-03-15" />
+      </div>
+    </div>
+
+    <div class="section-title">Сравнение водной поверхности</div>
+    <div class="row-2">
+      <div class="form-group">
+        <label>Дата «до»</label>
+        <input type="date" id="date-before" value="2023-09-01" />
+      </div>
+      <div class="form-group">
+        <label>Дата «после»</label>
+        <input type="date" id="date-after" value="2024-04-01" onchange="onDateChange()" />
+      </div>
+    </div>
+
+    <div class="section-title">Температура (Open-Meteo)</div>
+    <div class="form-group">
+      <label>Прогноз / история °C (авто по датам)</label>
+      <input type="number" id="temp-forecast" placeholder="загружается автоматически…" step="0.5" />
+    </div>
+    <div id="temp-chip">
+      <span>🌡</span>
+      <span class="chip-val" id="chip-val">—</span>°C
+      <span class="chip-src" id="chip-src"></span>
+    </div>
+
+    <div class="section-title">Пороги</div>
+    <div class="row-2">
+      <div class="form-group">
+        <label>NDSI (снег)</label>
+        <input type="number" id="snow-threshold" value="0.4" min="0" max="1" step="0.05" />
+      </div>
+      <div class="form-group">
+        <label>MNDWI (вода)</label>
+        <input type="number" id="water-threshold" value="0.0" min="-1" max="1" step="0.05" />
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Порог таяния (км²/день)</label>
+      <input type="number" id="melt-threshold" value="50" min="0" step="5" />
+    </div>
+
+    <button id="btn-analyze" disabled onclick="runAnalysis()">Выбрать область на карте</button>
+    <button id="btn-csv" disabled onclick="exportCsv()">⬇ Скачать CSV</button>
+
+    <div id="loader">
+      <div class="spinner"></div>
+      Загрузка снимков Sentinel-2…
+    </div>
+    <div id="error-msg"></div>
+
+    <div id="results">
+      <div class="section-title">Результаты</div>
+      <div id="risk-card" class="risk-card"></div>
+
+      <div class="metric-grid">
+        <div class="metric-card"><div class="val" id="m-snow">—</div><div class="lbl">Снег, км²</div></div>
+        <div class="metric-card"><div class="val" id="m-water">—</div><div class="lbl">Вода после, км²</div></div>
+        <div class="metric-card"><div class="val" id="m-flood">—</div><div class="lbl">Новое затопление, км²</div></div>
+        <div class="metric-card"><div class="val" id="m-melt">—</div><div class="lbl">Таяние, км²/день</div></div>
+      </div>
+
+      <div class="section-title">Условия риска</div>
+      <ul class="condition-list" id="condition-list"></ul>
+
+      <div class="section-title">Использованные снимки</div>
+      <ul class="condition-list" id="scenes-list"></ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- Map -->
+<div id="map"></div>
+
+<!-- Legend -->
+<div id="legend" style="display:none">
+  <div class="leg-title">Легенда</div>
+  <div class="leg-item"><div class="swatch" style="background:rgba(79,126,248,0.5)"></div> Снег</div>
+  <div class="leg-item"><div class="swatch" style="background:rgba(6,182,212,0.5)"></div> Вода</div>
+  <div class="leg-item"><div class="swatch" style="background:rgba(220,38,38,0.6)"></div> Новое затопление</div>
+</div>
+
+<script>
+// ── Map init ─────────────────────────────────────────────────────────────────
+const map = L.map('map').setView([48.0, 67.0], 5);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '© OpenStreetMap', maxZoom: 19,
+}).addTo(map);
+
+// ── Draw ──────────────────────────────────────────────────────────────────────
+const drawnItems = new L.FeatureGroup().addTo(map);
+const drawControl = new L.Control.Draw({
+  draw: {
+    rectangle: { shapeOptions: { color: '#4f7ef8', weight: 2, fillOpacity: 0.08 } },
+    polygon:   { shapeOptions: { color: '#4f7ef8', weight: 2, fillOpacity: 0.08 }, showArea: true },
+    polyline: false, circle: false, circlemarker: false, marker: false,
+  },
+  edit: { featureGroup: drawnItems },
+});
+map.addControl(drawControl);
+
+let bbox = null;
+let lastRequest = null;
+
+map.on(L.Draw.Event.CREATED, (e) => {
+  drawnItems.clearLayers();
+  drawnItems.addLayer(e.layer);
+
+  const b = e.layer.getBounds();
+  bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
+
+  const type = e.layerType === 'rectangle' ? '▭ Прямоугольник' : '⬠ Полигон';
+  const status = document.getElementById('roi-status');
+  status.className = 'has-roi';
+  status.textContent = `${type} выбран ✓`;
+  document.getElementById('roi-coords').textContent =
+    `${bbox.map(v => v.toFixed(4)).join(', ')}`;
+
+  document.getElementById('btn-analyze').disabled = false;
+  document.getElementById('btn-analyze').textContent = 'Анализировать';
+
+  fetchTemperature();
+});
+
+// при редактировании — обновляет bbox
+map.on(L.Draw.Event.EDITED, (e) => {
+  e.layers.eachLayer(layer => {
+    const b = layer.getBounds();
+    bbox = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
+    document.getElementById('roi-coords').textContent =
+      `${bbox.map(v => v.toFixed(4)).join(', ')}`;
+  });
+  fetchTemperature();
+});
+
+// при удалении — сбрасывает
+map.on(L.Draw.Event.DELETED, () => {
+  bbox = null;
+  lastRequest = null;
+  document.getElementById('roi-status').className = '';
+  document.getElementById('roi-status').textContent = 'Используйте инструменты на карте для выбора области';
+  document.getElementById('roi-coords').textContent = '';
+  document.getElementById('btn-analyze').disabled = true;
+  document.getElementById('btn-analyze').textContent = 'Выбрать область на карте';
+  document.getElementById('btn-csv').disabled = true;
+  document.getElementById('temp-chip').style.display = 'none';
+  document.getElementById('temp-forecast').value = '';
+  document.getElementById('legend').style.display = 'none';
+  clearLayers();
+  hideResults();
+  hideError();
+});
+
+// ── Temperature auto-fetch ────────────────────────────────────────────────────
+function onDateChange() {
+  if (bbox) fetchTemperature();
+}
+
+async function fetchTemperature() {
+  if (!bbox) return;
+
+  const lat = ((bbox[1] + bbox[3]) / 2).toFixed(4);
+  const lon = ((bbox[0] + bbox[2]) / 2).toFixed(4);
+
+  // t = date_after, смотрим t, t+1, t+2, t+3, t+4, t+5
+  const dateStart = document.getElementById('date-after').value;
+  const d = new Date(dateStart);
+  d.setDate(d.getDate() + 5);
+  const dateEnd = d.toISOString().slice(0, 10);
+
+  try {
+    const res = await fetch(
+      `/api/temperature?lat=${lat}&lon=${lon}&date_start=${dateStart}&date_end=${dateEnd}`
+    );
+    if (!res.ok) return;
+    const data = await res.json();
+
+    if (data.avg_temp_c !== null) {
+      document.getElementById('temp-forecast').value = data.avg_temp_c;
+      document.getElementById('chip-val').textContent = data.avg_temp_c;
+      const srcLabel = {
+        'historical':        'архив ERA5',
+        'forecast':          'прогноз',
+        'historical+partial':'архив ERA5',
+      }[data.source] || data.source;
+      // показывает период: date_after … date_after+5
+      document.getElementById('chip-src').textContent =
+        `${srcLabel} · ${dateStart} → ${dateEnd}`;
+      document.getElementById('temp-chip').style.display = 'flex';
+    }
+  } catch (_) {
+    // молча игнорирует — пользователь введёт вручную
+  }
+} 
+
+// ── Layers ────────────────────────────────────────────────────────────────────
+let snowLayer = null, waterLayer = null, floodLayer = null;
+
+function clearLayers() {
+  [snowLayer, waterLayer, floodLayer].forEach(l => { if (l) map.removeLayer(l); });
+  snowLayer = waterLayer = floodLayer = null;
+}
+
+function addLayer(geojson, color, opacity) {
+  return L.geoJSON(geojson, {
+    style: { color, fillColor: color, fillOpacity: opacity, weight: 0.5, opacity: 0.9 },
+  }).addTo(map);
+}
+
+// ── Analysis ──────────────────────────────────────────────────────────────────
+async function runAnalysis() {
+  if (!bbox) return;
+
+  showLoader(true);
+  hideError();
+  hideResults();
+
+  lastRequest = buildRequest();
+  // POST /api/analyze → bbox + даты уходят на бэкенд
+  try {
+    const res = await fetch('/api/analyze', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(lastRequest),
+    });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || 'Ошибка сервера');
+    }
+    renderResults(await res.json());
+  } catch (e) {
+    showError(e.message);
+  } finally {
+    showLoader(false);
+  }
+}
+
+function buildRequest() {
+  const tempVal = document.getElementById('temp-forecast').value;
+  return {
+    bbox,
+    date_snow_start:     document.getElementById('date-snow-start').value,
+    date_snow_end:       document.getElementById('date-snow-end').value,
+    date_before:         document.getElementById('date-before').value,
+    date_after:          document.getElementById('date-after').value,
+    snow_threshold:      parseFloat(document.getElementById('snow-threshold').value),
+    water_threshold:     parseFloat(document.getElementById('water-threshold').value),
+    melt_rate_threshold: parseFloat(document.getElementById('melt-threshold').value),
+    temp_forecast:       tempVal !== '' ? parseFloat(tempVal) : null,
+  };
+}
+
+function renderResults(data) {
+  const m = data.metrics;
+  const r = data.risk;
+
+  document.getElementById('m-snow').textContent  = m.snow_area_km2;
+  document.getElementById('m-water').textContent = m.water_area_after_km2;
+  document.getElementById('m-flood').textContent = m.new_flood_area_km2;
+  document.getElementById('m-melt').textContent  = m.melt_rate_km2_per_day;
+
+  const riskEl = document.getElementById('risk-card');
+  if (r.high_risk) {
+    riskEl.className = 'risk-card risk-high';
+    riskEl.textContent = '⚠ ВЫСОКИЙ РИСК ПАВОДКА';
+  } else {
+    riskEl.className = 'risk-card risk-low';
+    riskEl.textContent = '✓ Риск паводка низкий';
+  }
+
+  const condEl = document.getElementById('condition-list');
+  condEl.innerHTML = '';
+  for (const [, cond] of Object.entries(r.conditions)) {
+    const li = document.createElement('li');
+    const dot = document.createElement('div');
+    dot.className = 'dot ' + (cond.triggered === true ? 'ok' : cond.triggered === false ? 'no' : 'na');
+    li.appendChild(dot);
+    let txt = cond.label;
+    if (cond.value !== undefined) txt += ` (${cond.value} / порог ${cond.threshold})`;
+    li.appendChild(document.createTextNode(txt));
+    condEl.appendChild(li);
+  }
+
+  const scenesEl = document.getElementById('scenes-list');
+  scenesEl.innerHTML = '';
+  const labels = { snow: 'Снежный период', before: 'До паводка', after: 'После паводка' };
+  for (const [key, sc] of Object.entries(data.scenes)) {
+    const li = document.createElement('li');
+    const dot = document.createElement('div');
+    dot.className = 'dot ok';
+    li.appendChild(dot);
+    li.appendChild(document.createTextNode(
+      `${labels[key] || key}: ${sc.date} (облачность ${sc.cloud_cover != null ? sc.cloud_cover.toFixed(1) : '—'}%)`
+    ));
+    scenesEl.appendChild(li);
+  }
+
+  clearLayers();
+  snowLayer  = addLayer(data.layers.snow,  '#4f7ef8', 0.45);
+  waterLayer = addLayer(data.layers.water, '#06b6d4', 0.45);
+  floodLayer = addLayer(data.layers.flood, '#dc2626', 0.6);
+
+  document.getElementById('legend').style.display = 'block';
+  document.getElementById('results').style.display = 'block';
+  document.getElementById('btn-csv').disabled = false;
+}
+
+// ── CSV export ────────────────────────────────────────────────────────────────
+async function exportCsv() {
+  if (!lastRequest) return;
+  const res = await fetch('/api/export-csv', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(lastRequest),
+  });
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'flood_report.csv'; a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── UI helpers ────────────────────────────────────────────────────────────────
+function showLoader(v) {
+  document.getElementById('loader').style.display = v ? 'block' : 'none';
+  document.getElementById('btn-analyze').disabled = v;
+}
+function showError(msg) {
+  const el = document.getElementById('error-msg');
+  el.textContent = '⚠ ' + msg;
+  el.style.display = 'block';
+}
+function hideError()   { document.getElementById('error-msg').style.display = 'none'; }
+function hideResults() { document.getElementById('results').style.display = 'none'; }
+</script>
+</body>
+</html>
