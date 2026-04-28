@@ -18,8 +18,8 @@ from analysis import compute_indices, compute_masks, compute_new_flood, compute_
 
 # ── Параметры (меняй здесь) ───────────────────────────────────────────────────
 BBOX        = [51.8, 47.0, 52.8, 47.6]   # Атырау, Казахстан
-DATE_BEFORE = ("2023-07-01", "2023-08-31")
-DATE_AFTER  = ("2024-04-10", "2024-05-10")
+DATE_BEFORE = ("2024-07-01", "2024-08-31")
+DATE_AFTER  = ("2025-04-10", "2025-05-10")
 WATER_THRESHOLD = 0.0
 OUTPUT_FILE = "tests/flood_visualization.png"
 # ─────────────────────────────────────────────────────────────────────────────

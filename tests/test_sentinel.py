@@ -15,13 +15,13 @@ from sentinel import load_bands, search_best_scene
 
 # Альпы — гарантированно есть снег зимой, хорошая покрытость Sentinel-2
 SNOW_BBOX   = [10.0, 46.0, 11.5, 47.0]
-SNOW_START  = "2024-01-15"
-SNOW_END    = "2024-02-28"
+SNOW_START  = "2025-01-15"
+SNOW_END    = "2025-02-28"
 
 # Женевское озеро летом — вода без снега
 WATER_BBOX  = [6.1, 46.2, 6.9, 46.55]
-WATER_START = "2023-07-01"
-WATER_END   = "2023-08-31"
+WATER_START = "2024-07-01"
+WATER_END   = "2024-08-31"
 
 
 class TestStacSearch:

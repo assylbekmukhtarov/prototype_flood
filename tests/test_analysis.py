@@ -171,7 +171,7 @@ class TestRealAreas:
         from sentinel import load_bands
 
         bbox = [6.1, 46.2, 6.9, 46.55]
-        data = load_bands(bbox, "2023-07-01", "2023-08-31")
+        data = load_bands(bbox, "2024-07-01", "2024-08-31")
         assert data is not None, "Нет снимков за летний период"
 
         _, mndwi = compute_indices(data["b3"], data["b11"])
@@ -193,8 +193,8 @@ class TestRealAreas:
 
         bbox = [51.8, 47.0, 52.8, 47.6]
 
-        before = load_bands(bbox, "2023-07-01", "2023-08-31")
-        after  = load_bands(bbox, "2024-04-10", "2024-05-10")
+        before = load_bands(bbox, "2024-07-01", "2024-08-31")
+        after  = load_bands(bbox, "2025-04-10", "2025-05-10")
 
         assert before is not None, "Нет снимка до паводка (лето 2023)"
         assert after  is not None, "Нет снимка после паводка (апрель-май 2024)"
