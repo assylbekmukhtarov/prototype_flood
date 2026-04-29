@@ -251,8 +251,9 @@
       box-shadow: 0 2px 8px rgba(0,0,0,0.08);
     }
     #legend .leg-title { font-weight: 700; color: #1a1d27; margin-bottom: 6px; }
-    #legend .leg-item  { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; color: #4b5563; }
-    #legend .swatch    { width: 14px; height: 14px; border-radius: 3px; }
+    #legend .leg-item  { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; color: #4b5563; cursor: pointer; user-select: none; }
+    #legend .swatch    { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
+    #legend input[type="checkbox"] { cursor: pointer; width: 13px; height: 13px; flex-shrink: 0; }
 
     /* ── Map ─────────────────────────────────────────────── */
     #map { flex: 1; }
@@ -378,9 +379,18 @@
 <!-- Legend -->
 <div id="legend" style="display:none">
   <div class="leg-title">Легенда</div>
-  <div class="leg-item"><div class="swatch" style="background:rgba(79,126,248,0.5)"></div> Снег</div>
-  <div class="leg-item"><div class="swatch" style="background:rgba(6,182,212,0.5)"></div> Вода</div>
-  <div class="leg-item"><div class="swatch" style="background:rgba(220,38,38,0.6)"></div> Новое затопление</div>
+  <label class="leg-item">
+    <input type="checkbox" id="chk-snow"  checked onchange="toggleLayer('snow')" />
+    <div class="swatch" style="background:rgba(79,126,248,0.5)"></div> Снег
+  </label>
+  <label class="leg-item">
+    <input type="checkbox" id="chk-water" checked onchange="toggleLayer('water')" />
+    <div class="swatch" style="background:rgba(6,182,212,0.5)"></div> Вода
+  </label>
+  <label class="leg-item">
+    <input type="checkbox" id="chk-flood" checked onchange="toggleLayer('flood')" />
+    <div class="swatch" style="background:rgba(220,38,38,0.6)"></div> Новое затопление
+  </label>
 </div>
 
 <script>
@@ -507,6 +517,22 @@ let snowLayer = null, waterLayer = null, floodLayer = null, rgbLayer = null;
 function clearLayers() {
   [snowLayer, waterLayer, floodLayer].forEach(l => { if (l) map.removeLayer(l); });
   snowLayer = waterLayer = floodLayer = null;
+  ['snow', 'water', 'flood'].forEach(name => {
+    const chk = document.getElementById('chk-' + name);
+    if (chk) chk.checked = true;
+  });
+}
+
+function toggleLayer(name) {
+  const layers = { snow: snowLayer, water: waterLayer, flood: floodLayer };
+  const layer = layers[name];
+  if (!layer) return;
+  const chk = document.getElementById('chk-' + name);
+  if (chk.checked) {
+    layer.addTo(map);
+  } else {
+    map.removeLayer(layer);
+  }
 }
 
 async function loadRgb() {
