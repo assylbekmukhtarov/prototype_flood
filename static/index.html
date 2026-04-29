@@ -9,6 +9,7 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
 
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -119,7 +120,7 @@
     #btn-analyze:hover:not(:disabled) { background: #3a6ae0; }
     #btn-analyze:disabled { background: #c7d0e0; color: #fff; cursor: not-allowed; opacity: 0.7; }
 
-    #btn-csv {
+    #btn-rgb, #btn-csv {
       width: 100%;
       padding: 8px;
       background: #fff;
@@ -131,6 +132,8 @@
       margin-top: 7px;
       transition: border-color 0.2s, color 0.2s;
     }
+    #btn-rgb:hover:not(:disabled) { border-color: #4f7ef8; color: #4f7ef8; }
+    #btn-rgb:disabled { opacity: 0.45; cursor: not-allowed; }
     #btn-csv:hover:not(:disabled) { border-color: #4f7ef8; color: #4f7ef8; }
     #btn-csv:disabled { opacity: 0.45; cursor: not-allowed; }
 
@@ -181,10 +184,44 @@
       padding: 11px 13px;
       margin-bottom: 10px;
       font-size: 13px;
-      font-weight: 600;
     }
-    .risk-high { background: #fff5f5; border: 1px solid #fca5a5; color: #dc2626; }
-    .risk-low  { background: #f0fdf4; border: 1px solid #86efac; color: #16a34a; }
+    .risk-high   { background: #fff5f5; border: 1px solid #fca5a5; }
+    .risk-medium { background: #fffbeb; border: 1px solid #fcd34d; }
+    .risk-low    { background: #f0fdf4; border: 1px solid #86efac; }
+
+    .risk-header { display: flex; align-items: center; gap: 8px; }
+    .risk-badge {
+      font-size: 12px; font-weight: 700; padding: 2px 8px;
+      border-radius: 12px; white-space: nowrap;
+    }
+    .badge-high   { background: #dc2626; color: #fff; }
+    .badge-medium { background: #d97706; color: #fff; }
+    .badge-low    { background: #16a34a; color: #fff; }
+
+    .risk-score-bar {
+      height: 6px; border-radius: 3px;
+      background: #e5e7eb; margin: 8px 0 4px; overflow: hidden;
+    }
+    .risk-score-fill { height: 100%; border-radius: 3px; transition: width 0.5s; }
+    .fill-high   { background: #dc2626; }
+    .fill-medium { background: #d97706; }
+    .fill-low    { background: #16a34a; }
+    .risk-score-label { font-size: 11px; color: #9ca3af; }
+
+    .factor-list { list-style: none; margin-top: 8px; }
+    .factor-list li {
+      font-size: 11px; padding: 3px 0; color: #4b5563;
+      display: flex; justify-content: space-between; align-items: center; gap: 6px;
+    }
+    .factor-score {
+      font-weight: 700; font-size: 12px; white-space: nowrap;
+    }
+
+    .chart-wrap {
+      margin-top: 10px; background: #f8f9fb;
+      border: 1px solid #e2e5ed; border-radius: 8px; padding: 10px;
+    }
+    .chart-wrap canvas { max-height: 180px; }
 
     .condition-list { list-style: none; }
     .condition-list li {
@@ -282,12 +319,19 @@
         <input type="number" id="water-threshold" value="0.0" min="-1" max="1" step="0.05" />
       </div>
     </div>
-    <div class="form-group">
-      <label>Порог таяния (км²/день)</label>
-      <input type="number" id="melt-threshold" value="50" min="0" step="5" />
+    <div class="row-2">
+      <div class="form-group">
+        <label>Порог таяния (км²/день)</label>
+        <input type="number" id="melt-threshold" value="50" min="0" step="5" />
+      </div>
+      <div class="form-group">
+        <label>Историч. лет (0 = выкл.)</label>
+        <input type="number" id="historical-years" value="10" min="0" max="20" step="1" />
+      </div>
     </div>
 
     <button id="btn-analyze" disabled onclick="runAnalysis()">Выбрать область на карте</button>
+    <button id="btn-rgb" disabled onclick="loadRgb()">Показать RGB-снимок</button>
     <button id="btn-csv" disabled onclick="exportCsv()">⬇ Скачать CSV</button>
 
     <div id="loader">
@@ -302,13 +346,24 @@
 
       <div class="metric-grid">
         <div class="metric-card"><div class="val" id="m-snow">—</div><div class="lbl">Снег, км²</div></div>
+        <div class="metric-card"><div class="val" id="m-hist">—</div><div class="lbl">Ист. среднее снег, км²</div></div>
         <div class="metric-card"><div class="val" id="m-water">—</div><div class="lbl">Вода после, км²</div></div>
         <div class="metric-card"><div class="val" id="m-flood">—</div><div class="lbl">Новое затопление, км²</div></div>
         <div class="metric-card"><div class="val" id="m-melt">—</div><div class="lbl">Таяние, км²/день</div></div>
       </div>
 
-      <div class="section-title">Условия риска</div>
-      <ul class="condition-list" id="condition-list"></ul>
+      <div id="chart-section" style="display:none">
+        <div class="section-title">История по годам</div>
+        <div class="chart-wrap">
+          <canvas id="chart-snow"></canvas>
+        </div>
+        <div class="chart-wrap" style="margin-top:8px">
+          <canvas id="chart-flood"></canvas>
+        </div>
+      </div>
+
+      <div class="section-title">Факторы риска</div>
+      <ul class="factor-list" id="factor-list"></ul>
 
       <div class="section-title">Использованные снимки</div>
       <ul class="condition-list" id="scenes-list"></ul>
@@ -366,6 +421,7 @@ map.on(L.Draw.Event.CREATED, (e) => {
 
   document.getElementById('btn-analyze').disabled = false;
   document.getElementById('btn-analyze').textContent = 'Анализировать';
+  document.getElementById('btn-rgb').disabled = false;
 
   fetchTemperature();
 });
@@ -390,6 +446,10 @@ map.on(L.Draw.Event.DELETED, () => {
   document.getElementById('roi-coords').textContent = '';
   document.getElementById('btn-analyze').disabled = true;
   document.getElementById('btn-analyze').textContent = 'Выбрать область на карте';
+  document.getElementById('btn-rgb').disabled = true;
+  document.getElementById('btn-rgb').textContent = 'Показать RGB-снимок';
+  document.getElementById('btn-rgb').onclick = loadRgb;
+  if (rgbLayer) { map.removeLayer(rgbLayer); rgbLayer = null; }
   document.getElementById('btn-csv').disabled = true;
   document.getElementById('temp-chip').style.display = 'none';
   document.getElementById('temp-forecast').value = '';
@@ -442,11 +502,63 @@ async function fetchTemperature() {
 } 
 
 // ── Layers ────────────────────────────────────────────────────────────────────
-let snowLayer = null, waterLayer = null, floodLayer = null;
+let snowLayer = null, waterLayer = null, floodLayer = null, rgbLayer = null;
 
 function clearLayers() {
   [snowLayer, waterLayer, floodLayer].forEach(l => { if (l) map.removeLayer(l); });
   snowLayer = waterLayer = floodLayer = null;
+}
+
+async function loadRgb() {
+  if (!bbox) return;
+  const bboxStr = bbox.join(',');
+  const dateStart = document.getElementById('date-after').value;
+  const d = new Date(dateStart);
+  d.setDate(d.getDate() + 30);
+  const dateEnd = d.toISOString().slice(0, 10);
+
+  document.getElementById('btn-rgb').textContent = 'Загрузка…';
+  document.getElementById('btn-rgb').disabled = true;
+
+  try {
+    const res = await fetch(
+      `/api/rgb?bbox=${bboxStr}&date_start=${dateStart}&date_end=${dateEnd}`
+    );
+    if (!res.ok) {
+      const err = await res.json();
+      showError(err.detail || 'Ошибка загрузки RGB');
+      return;
+    }
+
+    // реальный bbox берём из заголовка ответа
+    const realBboxStr = res.headers.get('real_bbox');
+    const [minx, miny, maxx, maxy] = realBboxStr.split(',').map(Number);
+    const bounds = [[miny, minx], [maxy, maxx]];
+
+    const blob = await res.blob();
+    const url  = URL.createObjectURL(blob);
+
+    if (rgbLayer) map.removeLayer(rgbLayer);
+    rgbLayer = L.imageOverlay(url, bounds, { opacity: 0.85, zIndex: 100 }).addTo(map);
+    document.getElementById('btn-rgb').textContent = 'Скрыть RGB';
+    document.getElementById('btn-rgb').onclick = toggleRgb;
+  } catch (e) {
+    showError('Ошибка RGB: ' + e.message);
+  } finally {
+    document.getElementById('btn-rgb').disabled = false;
+  }
+}
+
+function toggleRgb() {
+  if (!rgbLayer) return;
+  if (map.hasLayer(rgbLayer)) {
+    map.removeLayer(rgbLayer);
+    document.getElementById('btn-rgb').textContent = 'Показать RGB-снимок';
+    document.getElementById('btn-rgb').onclick = loadRgb;
+  } else {
+    rgbLayer.addTo(map);
+    document.getElementById('btn-rgb').textContent = 'Скрыть RGB';
+  }
 }
 
 function addLayer(geojson, color, opacity) {
@@ -495,40 +607,114 @@ function buildRequest() {
     water_threshold:     parseFloat(document.getElementById('water-threshold').value),
     melt_rate_threshold: parseFloat(document.getElementById('melt-threshold').value),
     temp_forecast:       tempVal !== '' ? parseFloat(tempVal) : null,
+    historical_years:    parseInt(document.getElementById('historical-years').value) || 0,
   };
 }
+
+let chartSnow = null, chartFlood = null;
 
 function renderResults(data) {
   const m = data.metrics;
   const r = data.risk;
+  const hp = data.historical;
 
   document.getElementById('m-snow').textContent  = m.snow_area_km2;
   document.getElementById('m-water').textContent = m.water_area_after_km2;
   document.getElementById('m-flood').textContent = m.new_flood_area_km2;
   document.getElementById('m-melt').textContent  = m.melt_rate_km2_per_day;
 
+  const avgSnow = hp && hp.avg_snow_km2 != null ? hp.avg_snow_km2 : null;
+  document.getElementById('m-hist').textContent = avgSnow !== null ? avgSnow : '—';
+
+  // ── Risk card ─────────────────────────────────────────────
+  const lvl   = r.risk_level;   // 'low' | 'medium' | 'high'
+  const score = r.risk_score;
+  const label = r.risk_label;
+  const icon  = lvl === 'high' ? '⚠' : lvl === 'medium' ? '▲' : '✓';
   const riskEl = document.getElementById('risk-card');
-  if (r.high_risk) {
-    riskEl.className = 'risk-card risk-high';
-    riskEl.textContent = '⚠ ВЫСОКИЙ РИСК ПАВОДКА';
-  } else {
-    riskEl.className = 'risk-card risk-low';
-    riskEl.textContent = '✓ Риск паводка низкий';
-  }
+  riskEl.className = `risk-card risk-${lvl}`;
+  riskEl.innerHTML = `
+    <div class="risk-header">
+      <span>${icon} ${label}</span>
+      <span class="risk-badge badge-${lvl}">${score}%</span>
+    </div>
+    <div class="risk-score-bar">
+      <div class="risk-score-fill fill-${lvl}" style="width:${score}%"></div>
+    </div>
+    <div class="risk-score-label">Индекс риска: ${score} / 100</div>`;
 
-  const condEl = document.getElementById('condition-list');
-  condEl.innerHTML = '';
-  for (const [, cond] of Object.entries(r.conditions)) {
+  // ── Factor list ───────────────────────────────────────────
+  const factorEl = document.getElementById('factor-list');
+  factorEl.innerHTML = '';
+  for (const [, f] of Object.entries(r.factors)) {
     const li = document.createElement('li');
-    const dot = document.createElement('div');
-    dot.className = 'dot ' + (cond.triggered === true ? 'ok' : cond.triggered === false ? 'no' : 'na');
-    li.appendChild(dot);
-    let txt = cond.label;
-    if (cond.value !== undefined) txt += ` (${cond.value} / порог ${cond.threshold})`;
-    li.appendChild(document.createTextNode(txt));
-    condEl.appendChild(li);
+    const scoreStr = f.score !== null
+      ? `<span class="factor-score">${f.score} / 100</span>`
+      : `<span class="factor-score" style="color:#9ca3af">н/д</span>`;
+    let detail = '';
+    if (f.value !== null && f.value !== undefined) {
+      detail = ` · ${parseFloat(f.value).toFixed(1)}`;
+      if (f.reference !== null && f.reference !== undefined)
+        detail += ` / ref ${parseFloat(f.reference).toFixed(1)}`;
+    }
+    li.innerHTML = `<span>${f.label}${detail}</span>${scoreStr}`;
+    factorEl.appendChild(li);
   }
 
+  // ── Historical charts ─────────────────────────────────────
+  const chartSection = document.getElementById('chart-section');
+  if (hp && (hp.snow_km2_by_year || hp.flood_km2_by_year)) {
+    chartSection.style.display = 'block';
+
+    const snowByYear  = hp.snow_km2_by_year  || {};
+    const floodByYear = hp.flood_km2_by_year || {};
+    const allYears = Array.from(new Set([
+      ...Object.keys(snowByYear), ...Object.keys(floodByYear)
+    ])).sort();
+
+    if (chartSnow)  { chartSnow.destroy();  chartSnow  = null; }
+    if (chartFlood) { chartFlood.destroy(); chartFlood = null; }
+
+    chartSnow = new Chart(document.getElementById('chart-snow'), {
+      type: 'bar',
+      data: {
+        labels: allYears,
+        datasets: [{
+          label: 'Снег, км²',
+          data: allYears.map(y => snowByYear[y] ?? null),
+          backgroundColor: 'rgba(79,126,248,0.6)',
+          borderColor: '#4f7ef8', borderWidth: 1,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: true,
+        plugins: { legend: { display: false }, title: { display: true, text: 'Площадь снега по годам' } },
+        scales: { y: { beginAtZero: true } },
+      },
+    });
+
+    chartFlood = new Chart(document.getElementById('chart-flood'), {
+      type: 'bar',
+      data: {
+        labels: allYears,
+        datasets: [{
+          label: 'Затопление, км²',
+          data: allYears.map(y => floodByYear[y] ?? null),
+          backgroundColor: 'rgba(220,38,38,0.55)',
+          borderColor: '#dc2626', borderWidth: 1,
+        }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: true,
+        plugins: { legend: { display: false }, title: { display: true, text: 'Новое затопление по годам' } },
+        scales: { y: { beginAtZero: true } },
+      },
+    });
+  } else {
+    chartSection.style.display = 'none';
+  }
+
+  // ── Scenes ────────────────────────────────────────────────
   const scenesEl = document.getElementById('scenes-list');
   scenesEl.innerHTML = '';
   const labels = { snow: 'Снежный период', before: 'До паводка', after: 'После паводка' };

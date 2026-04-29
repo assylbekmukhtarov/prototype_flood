@@ -29,25 +29,51 @@ def compute_masks(
 def compute_area_km2(mask: np.ndarray, bbox: list[float]) -> float:
     """
     Считает площадь маски в км².
-    Пиксель = (bbox_area / total_pixels) в градусах → конвертирует через приближение.
+
+    Вычисляет реальный размер одного пикселя из real_bbox и shape маски.
+    Это корректно даже при COG overview-downsampling: real_bbox всегда
+    соответствует фактическому окну снимка, а shape — количеству пикселей
+    в этом окне, поэтому pixel_km2 = bbox_km2 / (rows * cols) даёт
+    истинный размер пикселя независимо от уровня масштабирования.
     """
+    import math
+
     pixel_count = int(mask.sum())
     if pixel_count == 0:
         return 0.0
 
-    # площадь bbox в градусах → в км² (грубое приближение)
     lon_min, lat_min, lon_max, lat_max = bbox
     lat_center = (lat_min + lat_max) / 2
 
-    # 1 градус широты = 111 км, 1 градус долготы = 111*cos(lat) км
-    import math
+    # размер одного пикселя в км² через реальный bbox и реальный shape
     km_per_lat = 111.0
     km_per_lon = 111.0 * math.cos(math.radians(lat_center))
+    pixel_height_km = (lat_max - lat_min) * km_per_lat / mask.shape[0]
+    pixel_width_km  = (lon_max - lon_min) * km_per_lon / mask.shape[1]
+    pixel_km2 = pixel_height_km * pixel_width_km
 
-    bbox_km2 = (lon_max - lon_min) * km_per_lon * (lat_max - lat_min) * km_per_lat
-    total_pixels = mask.shape[0] * mask.shape[1]
+    return pixel_count * pixel_km2
 
-    return pixel_count * bbox_km2 / total_pixels
+
+def remove_small_objects(mask: np.ndarray, min_pixels: int = 500) -> np.ndarray:
+    """
+    Удаляет связные компоненты маски размером меньше min_pixels.
+    Для Sentinel-2 10м: 500 пикселей ≈ 0.5 га (по ТЗ, Шаг 3.3).
+    При COG overview-downsampling пиксели крупнее, поэтому порог масштабируется
+    пропорционально — реально отсекает объекты меньше ~0.5 га на любом zoom.
+    """
+    from scipy.ndimage import label
+
+    if mask.sum() == 0:
+        return mask
+
+    labeled, num_features = label(mask)
+    for component in range(1, num_features + 1):
+        if (labeled == component).sum() < min_pixels:
+            mask = mask.copy()
+            mask[labeled == component] = 0
+
+    return mask
 
 
 def compute_new_flood(
@@ -70,67 +96,138 @@ def compute_melt_rate(
 
 def assess_risk(
     snow_area_km2: float,
-    historical_avg_km2: float | None,
     melt_rate: float,
     melt_rate_threshold: float = 50.0,
     temp_forecast: float | None = None,
+    # исторический профиль
+    avg_snow_km2: float | None = None,
+    avg_flood_km2: float | None = None,
+    max_flood_km2: float | None = None,
+    current_flood_km2: float = 0.0,
 ) -> dict:
     """
-    Оценивает риск паводка по трём условиям.
-    Возвращает dict с результатом и объяснением.
+    Весовая модель риска паводка. Возвращает score 0–100 и градацию.
+
+    Факторы и веса:
+      40% — снег относительно исторического среднего
+      25% — скорость таяния относительно порога
+      20% — температура прогноза
+      15% — текущее затопление относительно исторического максимума
     """
-    conditions = {}
-    triggered = []
+    import math
 
-    # условие 1: снег выше исторического среднего
-    if historical_avg_km2 is not None and historical_avg_km2 > 0:
-        cond1 = snow_area_km2 > historical_avg_km2
-        conditions["snow_above_avg"] = {
-            "triggered": cond1,
+    factors = {}
+    weighted_sum = 0.0
+    total_weight = 0.0
+
+    # --- фактор 1: снег vs историческое среднее (вес 40%) ---
+    w1 = 40.0
+    if avg_snow_km2 is not None and avg_snow_km2 > 0:
+        # ratio > 1 = снега больше нормы, насыщаем через tanh
+        ratio = snow_area_km2 / avg_snow_km2
+        score1 = min(100.0, math.tanh(ratio - 1.0 + 0.5) * 100 + 50)
+        score1 = max(0.0, score1)
+        factors["snow_vs_avg"] = {
+            "label": "Снег vs историческое среднее",
             "value": snow_area_km2,
-            "threshold": historical_avg_km2,
-            "label": "Снег выше исторического среднего",
+            "reference": avg_snow_km2,
+            "score": round(score1, 1),
+            "weight": w1,
         }
-        if cond1:
-            triggered.append("snow_above_avg")
+        weighted_sum += score1 * w1
+        total_weight  += w1
     else:
-        conditions["snow_above_avg"] = {"triggered": None, "label": "Нет исторических данных"}
+        factors["snow_vs_avg"] = {
+            "label": "Снег vs историческое среднее",
+            "value": snow_area_km2,
+            "reference": None,
+            "score": None,
+            "weight": w1,
+        }
 
-    # условие 2: скорость таяния выше порога
-    cond2 = melt_rate > melt_rate_threshold
-    conditions["melt_rate"] = {
-        "triggered": cond2,
+    # --- фактор 2: скорость таяния (вес 25%) ---
+    w2 = 25.0
+    if melt_rate_threshold > 0:
+        score2 = min(100.0, (melt_rate / melt_rate_threshold) * 100)
+    else:
+        score2 = 100.0 if melt_rate > 0 else 0.0
+    factors["melt_rate"] = {
+        "label": "Скорость таяния",
         "value": round(melt_rate, 2),
-        "threshold": melt_rate_threshold,
-        "label": "Скорость таяния выше порога",
+        "reference": melt_rate_threshold,
+        "score": round(score2, 1),
+        "weight": w2,
     }
-    if cond2:
-        triggered.append("melt_rate")
+    weighted_sum += score2 * w2
+    total_weight  += w2
 
-    # условие 3: температура > 0 (если задана)
+    # --- фактор 3: температура прогноза (вес 20%) ---
+    w3 = 20.0
     if temp_forecast is not None:
-        cond3 = temp_forecast > 0
-        conditions["temp_positive"] = {
-            "triggered": cond3,
+        # 0°C = 50%, каждый +1°C добавляет ~5 баллов, насыщение на +10°C
+        score3 = min(100.0, max(0.0, 50.0 + temp_forecast * 5.0))
+        factors["temperature"] = {
+            "label": "Прогноз температуры",
             "value": temp_forecast,
-            "threshold": 0,
-            "label": "Температура выше 0°C",
+            "reference": 0,
+            "score": round(score3, 1),
+            "weight": w3,
         }
-        if cond3:
-            triggered.append("temp_positive")
-        required = 3
+        weighted_sum += score3 * w3
+        total_weight  += w3
     else:
-        conditions["temp_positive"] = {"triggered": None, "label": "Температура не задана"}
-        required = 2
+        factors["temperature"] = {
+            "label": "Прогноз температуры",
+            "value": None,
+            "reference": 0,
+            "score": None,
+            "weight": w3,
+        }
 
-    active = [k for k, v in conditions.items() if v.get("triggered") is True]
-    high_risk = len(active) >= required
+    # --- фактор 4: текущее затопление vs исторический максимум (вес 15%) ---
+    w4 = 15.0
+    if max_flood_km2 is not None and max_flood_km2 > 0:
+        score4 = min(100.0, (current_flood_km2 / max_flood_km2) * 100)
+        factors["flood_vs_max"] = {
+            "label": "Затопление vs исторический максимум",
+            "value": current_flood_km2,
+            "reference": max_flood_km2,
+            "avg_flood_km2": avg_flood_km2,
+            "score": round(score4, 1),
+            "weight": w4,
+        }
+        weighted_sum += score4 * w4
+        total_weight  += w4
+    else:
+        factors["flood_vs_max"] = {
+            "label": "Затопление vs исторический максимум",
+            "value": current_flood_km2,
+            "reference": None,
+            "avg_flood_km2": avg_flood_km2,
+            "score": None,
+            "weight": w4,
+        }
+
+    # --- итоговый score ---
+    risk_score = round(weighted_sum / total_weight, 1) if total_weight > 0 else 0.0
+
+    if risk_score < 30:
+        level = "low"
+        label = "Низкий риск"
+    elif risk_score < 70:
+        level = "medium"
+        label = "Средний риск"
+    else:
+        level = "high"
+        label = "Высокий риск"
 
     return {
-        "high_risk": high_risk,
-        "triggered_count": len(active),
-        "required_count": required,
-        "conditions": conditions,
+        "risk_score": risk_score,
+        "risk_level": level,
+        "risk_label": label,
+        "factors": factors,
+        # обратная совместимость
+        "high_risk": level == "high",
     }
 
 

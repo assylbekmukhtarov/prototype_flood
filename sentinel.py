@@ -122,11 +122,142 @@ def load_bands(bbox: list[float], date_start: str, date_end: str) -> dict | None
     }
 
 
+def load_rgb(bbox: list[float], date_start: str, date_end: str) -> dict | None:
+    """
+    Загружает B4 (red), B3 (green), B2 (blue) для RGB-визуализации.
+    Возвращает dict с тремя массивами, real_bbox и датой, или None если снимков нет.
+    """
+    item = search_best_scene(bbox, date_start, date_end)
+    if item is None:
+        return None
+
+    b4, real_bbox = read_band_window(item, "red",   bbox)   # B4
+    b3, _         = read_band_window(item, "green", bbox)   # B3
+    b2, _         = read_band_window(item, "blue",  bbox)   # B2
+
+    # приводит все к одному размеру по B4
+    target = b4.shape
+    if b3.shape != target:
+        b3 = _resize(b3, target)
+    if b2.shape != target:
+        b2 = _resize(b2, target)
+
+    return {
+        "b4": b4,
+        "b3": b3,
+        "b2": b2,
+        "real_bbox": real_bbox,
+        "date": item.datetime.strftime("%Y-%m-%d") if item.datetime else date_start,
+    }
+
+
 def _resize(arr: np.ndarray, target_shape: tuple) -> np.ndarray:
     """Изменяет размер массива до target_shape через scipy.ndimage.zoom."""
-    from rasterio.transform import from_bounds
-    import rasterio.transform
     zoom_y = target_shape[0] / arr.shape[0]
     zoom_x = target_shape[1] / arr.shape[1]
     from scipy.ndimage import zoom
     return zoom(arr, (zoom_y, zoom_x), order=1).astype(np.float32)
+
+
+def compute_historical_profile(
+    bbox: list[float],
+    date_snow_start: str,
+    date_snow_end: str,
+    date_before: str,
+    date_after: str,
+    historical_years: int,
+    snow_threshold: float = 0.4,
+    water_threshold: float = 0.0,
+) -> dict:
+    """
+    За каждый из N предыдущих лет загружает снимки снежного периода,
+    «до» и «после» паводка — и собирает профиль:
+      - snow_km2_by_year:  площадь снега по годам
+      - flood_km2_by_year: площадь нового затопления по годам
+      - avg_snow_km2:      среднее снега
+      - avg_flood_km2:     среднее затопления
+      - max_flood_km2:     максимальное затопление за историю
+    Годы без снимков пропускаются.
+    """
+    from analysis import (
+        compute_indices, compute_masks, compute_area_km2,
+        compute_new_flood, remove_small_objects,
+    )
+    from scipy.ndimage import zoom as _zoom
+
+    ds_snow  = datetime.strptime(date_snow_start, "%Y-%m-%d")
+    de_snow  = datetime.strptime(date_snow_end,   "%Y-%m-%d")
+    ds_before = datetime.strptime(date_before, "%Y-%m-%d")
+    de_after  = datetime.strptime(date_after,  "%Y-%m-%d")
+
+    snow_by_year  = {}
+    flood_by_year = {}
+
+    for offset in range(1, historical_years + 1):
+        year = de_after.year - offset
+        try:
+            ys_snow  = ds_snow.replace(year=ds_snow.year   - offset).strftime("%Y-%m-%d")
+            ye_snow  = de_snow.replace(year=de_snow.year   - offset).strftime("%Y-%m-%d")
+            ys_before = ds_before.replace(year=ds_before.year - offset).strftime("%Y-%m-%d")
+            ye_after  = de_after.replace(year=de_after.year  - offset).strftime("%Y-%m-%d")
+        except ValueError:
+            continue  # 29 февраля в невисокосный год
+
+        # снег
+        snow_data = load_bands(bbox, ys_snow, ye_snow)
+        if snow_data is not None:
+            ndsi, _ = compute_indices(snow_data["b3"], snow_data["b11"])
+            snow_mask, _ = compute_masks(ndsi, ndsi, snow_threshold=snow_threshold)
+            snow_mask = remove_small_objects(snow_mask)
+            snow_by_year[year] = round(compute_area_km2(snow_mask, snow_data["real_bbox"]), 2)
+
+        # затопление: before vs after
+        before_data = load_bands(bbox, ys_before, ys_before)
+        if before_data is None:
+            d = datetime.strptime(ys_before, "%Y-%m-%d")
+            before_data = load_bands(
+                bbox,
+                (d - timedelta(days=7)).strftime("%Y-%m-%d"),
+                (d + timedelta(days=7)).strftime("%Y-%m-%d"),
+            )
+        after_data = load_bands(bbox, ye_after, ye_after)
+        if after_data is None:
+            d = datetime.strptime(ye_after, "%Y-%m-%d")
+            after_data = load_bands(
+                bbox,
+                (d - timedelta(days=7)).strftime("%Y-%m-%d"),
+                (d + timedelta(days=7)).strftime("%Y-%m-%d"),
+            )
+
+        if before_data is not None and after_data is not None:
+            _, mndwi_b = compute_indices(before_data["b3"], before_data["b11"])
+            _, wb = compute_masks(mndwi_b, mndwi_b,
+                                  snow_threshold=snow_threshold,
+                                  water_threshold=water_threshold)
+            wb = remove_small_objects(wb)
+
+            _, mndwi_a = compute_indices(after_data["b3"], after_data["b11"])
+            _, wa = compute_masks(mndwi_a, mndwi_a,
+                                  snow_threshold=snow_threshold,
+                                  water_threshold=water_threshold)
+            wa = remove_small_objects(wa)
+
+            if wb.shape != wa.shape:
+                zy = wa.shape[0] / wb.shape[0]
+                zx = wa.shape[1] / wb.shape[1]
+                wb = (_zoom(wb.astype(float), (zy, zx), order=0) > 0.5).astype(np.uint8)
+
+            flood = compute_new_flood(wb, wa)
+            flood = remove_small_objects(flood)
+            flood_by_year[year] = round(compute_area_km2(flood, after_data["real_bbox"]), 2)
+
+    snow_vals  = list(snow_by_year.values())
+    flood_vals = list(flood_by_year.values())
+
+    return {
+        "snow_km2_by_year":  snow_by_year,
+        "flood_km2_by_year": flood_by_year,
+        "avg_snow_km2":  round(sum(snow_vals)  / len(snow_vals),  2) if snow_vals  else None,
+        "avg_flood_km2": round(sum(flood_vals) / len(flood_vals), 2) if flood_vals else None,
+        "max_flood_km2": round(max(flood_vals), 2) if flood_vals else None,
+    }
