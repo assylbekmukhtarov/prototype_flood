@@ -111,7 +111,7 @@ uvicorn main:app --reload --port 8000
   "water_threshold": 0.0,
   "melt_rate_threshold": 50.0,
   "temp_forecast": null,
-  "historical_years": 10
+  "historical_years": 0
 }
 ```
 

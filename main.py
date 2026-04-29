@@ -49,7 +49,7 @@ class AnalyzeRequest(BaseModel):
     water_threshold: float = 0.0
     melt_rate_threshold: float = 50.0
     temp_forecast: float | None = None
-    historical_years: int = 10
+    historical_years: int = 0
 
 
 @app.post("/api/analyze")
