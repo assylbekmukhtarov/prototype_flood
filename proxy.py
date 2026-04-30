@@ -1,4 +1,3 @@
-import io
 import numpy as np
 import rasterio
 from rasterio.windows import from_bounds
@@ -7,7 +6,7 @@ from pystac_client import Client
 from pyproj import Transformer
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, StreamingResponse, Response
+from fastapi.responses import FileResponse, Response
 import threading
 
 STAC_URL   = "https://earth-search.aws.element84.com/v1"
@@ -86,60 +85,6 @@ def proxy_band(item_id: str, band: str, bbox: str):
         },
     )
 
-
-@app.get("/proxy/rgb")
-def proxy_rgb(bbox: str, date_start: str, date_end: str):
-    """
-    Возвращает PNG RGB-снимок (B4/B3/B2).
-    Заголовки: x-real-bbox, x-scene-date
-    """
-    try:
-        from PIL import Image
-    except ImportError:
-        raise HTTPException(status_code=500, detail="Pillow не установлен")
-
-    bbox_list = [float(v) for v in bbox.split(",")]
-
-    client = Client.open(STAC_URL)
-    search = client.search(
-        collections=[COLLECTION],
-        bbox=bbox_list,
-        datetime=f"{date_start}/{date_end}",
-        query={"eo:cloud_cover": {"lt": 20}},
-        max_items=20,
-    )
-    items = list(search.items())
-    if not items:
-        raise HTTPException(status_code=404, detail="Нет снимков за указанный период")
-    items.sort(key=lambda i: i.properties.get("eo:cloud_cover", 100))
-    item = items[0]
-
-    b4, real_bbox = _read_band(item.assets["red"].href,   bbox_list)
-    b3, _         = _read_band(item.assets["green"].href, bbox_list)
-    b2, _         = _read_band(item.assets["blue"].href,  bbox_list)
-
-    def norm(arr):
-        p2, p98 = np.percentile(arr, 2), np.percentile(arr, 98)
-        return (np.clip((arr - p2) / (p98 - p2 + 1e-6), 0, 1) * 255).astype(np.uint8)
-
-    rgb = np.stack([norm(b4), norm(b3), norm(b2)], axis=-1)
-    img = Image.fromarray(rgb, mode="RGB")
-    buf = io.BytesIO()
-    img.save(buf, format="PNG")
-    buf.seek(0)
-
-    real_bbox_str = ",".join(str(round(v, 6)) for v in real_bbox)
-    scene_date = item.datetime.strftime("%Y-%m-%d") if item.datetime else date_start
-
-    return StreamingResponse(
-        buf,
-        media_type="image/png",
-        headers={
-            "x-real-bbox":  real_bbox_str,
-            "x-scene-date": scene_date,
-            "Access-Control-Expose-Headers": "x-real-bbox,x-scene-date",
-        },
-    )
 
 
 def _read_band(href: str, bbox: list[float]) -> tuple[np.ndarray, list[float]]:

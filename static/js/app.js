@@ -235,20 +235,22 @@ async function loadRgb() {
     if (!bbox) return;
     const dateStart = document.getElementById("date-after").value;
     const dateEnd = shiftDate(dateStart, 30);
-    const bboxStr = bbox.join(",");
 
     document.getElementById("btn-rgb").textContent = "Загрузка…";
     document.getElementById("btn-rgb").disabled = true;
 
     try {
-        const res = await fetch(`/proxy/rgb?bbox=${bboxStr}&date_start=${dateStart}&date_end=${dateEnd}`);
-        if (!res.ok) throw new Error("Нет снимков за указанный период");
-        const realBboxStr = res.headers.get("x-real-bbox");
-        const [minx, miny, maxx, maxy] = realBboxStr.split(",").map(Number);
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
+        const item = await searchBestScene(bbox, dateStart, dateEnd);
+        if (!item) throw new Error("Нет снимков за указанный период");
+
+        const [b4, b3, b2] = await Promise.all([
+            fetchBand(item.id, "red",   bbox),
+            fetchBand(item.id, "green", bbox),
+            fetchBand(item.id, "blue",  bbox),
+        ]);
+
         if (rgbLayer) map.removeLayer(rgbLayer);
-        rgbLayer = L.imageOverlay(url, [[miny, minx], [maxy, maxx]], { opacity: 0.85, zIndex: 100 }).addTo(map);
+        rgbLayer = addRgbLayer(map, b4, b3, b2).addTo(map);
         document.getElementById("btn-rgb").textContent = "Скрыть RGB";
         document.getElementById("btn-rgb").onclick = toggleRgb;
     } catch (e) {
