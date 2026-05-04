@@ -1,6 +1,5 @@
 services:
-  flood-monitor:
+  web:
     build: .
     ports:
-      - "8000:8000"
-    restart: unless-stopped
+      - "8080:80"
