@@ -244,9 +244,9 @@ async function loadRgb() {
         if (!item) throw new Error("Нет снимков за указанный период");
 
         const [b4, b3, b2] = await Promise.all([
-            fetchBand(item.id, "red",   bbox),
-            fetchBand(item.id, "green", bbox),
-            fetchBand(item.id, "blue",  bbox),
+            fetchBand(item, "red",   bbox),
+            fetchBand(item, "green", bbox),
+            fetchBand(item, "blue",  bbox),
         ]);
 
         if (rgbLayer) map.removeLayer(rgbLayer);

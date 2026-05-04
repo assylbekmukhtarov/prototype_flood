@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(curl -s -I -X OPTIONS \"https://sentinel-cogs.s3.us-west-2.amazonaws.com/\" -H \"Origin: https://example.com\" -H \"Access-Control-Request-Method: GET\")"
+    ]
+  }
+}

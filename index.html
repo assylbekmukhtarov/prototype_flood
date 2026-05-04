@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Мониторинг паводков</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+  <link rel="stylesheet" href="static/css/style.css" />
+</head>
+<body>
+
+<!-- Sidebar -->
+<div id="sidebar">
+  <div id="sidebar-header">
+    <h1>Мониторинг снега и паводков</h1>
+    <p>Sentinel-2 · NDSI / MNDWI</p>
+  </div>
+
+  <div id="sidebar-body">
+
+    <div class="section-title">Область интереса</div>
+    <div id="roi-status">Используйте инструменты на карте для выбора области</div>
+    <div id="roi-coords"></div>
+
+    <div class="section-title">Снежный период</div>
+    <div class="row-2">
+      <div class="form-group">
+        <label>Начало</label>
+        <input type="date" id="date-snow-start" value="2025-02-01" />
+      </div>
+      <div class="form-group">
+        <label>Конец</label>
+        <input type="date" id="date-snow-end" value="2025-03-15" />
+      </div>
+    </div>
+
+    <div class="section-title">Сравнение водной поверхности</div>
+    <div class="row-2">
+      <div class="form-group">
+        <label>Дата «до»</label>
+        <input type="date" id="date-before" value="2024-09-01" />
+      </div>
+      <div class="form-group">
+        <label>Дата «после»</label>
+        <input type="date" id="date-after" value="2025-04-01" onchange="onDateChange()" />
+      </div>
+    </div>
+
+    <div class="section-title">Температура (Open-Meteo)</div>
+    <div class="form-group">
+      <label>Прогноз / история °C (авто по датам)</label>
+      <input type="number" id="temp-forecast" placeholder="загружается автоматически…" step="0.5" />
+    </div>
+    <div id="temp-chip">
+      <span class="chip-val" id="chip-val">—</span>°C
+      <span class="chip-src" id="chip-src"></span>
+    </div>
+
+    <div class="section-title">Пороги</div>
+    <div class="row-2">
+      <div class="form-group">
+        <label>NDSI (снег)</label>
+        <input type="number" id="snow-threshold" value="0.4" min="0" max="1" step="0.05" />
+      </div>
+      <div class="form-group">
+        <label>MNDWI (вода)</label>
+        <input type="number" id="water-threshold" value="0.0" min="-1" max="1" step="0.05" />
+      </div>
+    </div>
+    <div class="row-2">
+      <div class="form-group">
+        <label>Порог таяния (км²/день)</label>
+        <input type="number" id="melt-threshold" value="50" min="0" step="5" />
+      </div>
+      <div class="form-group">
+        <label>Историч. лет (0 = выкл.)</label>
+        <input type="number" id="historical-years" value="0" min="0" max="20" step="1" />
+      </div>
+    </div>
+
+    <button id="btn-analyze" disabled onclick="runAnalysis()">Выбрать область на карте</button>
+    <button id="btn-rgb"     disabled onclick="loadRgb()">Показать RGB-снимок</button>
+    <button id="btn-csv"     disabled onclick="exportCsv()">Скачать CSV</button>
+
+    <div id="loader">
+      <div class="spinner"></div>
+      Загрузка снимков Sentinel-2…
+    </div>
+    <div id="error-msg"></div>
+
+    <div id="results">
+      <div class="section-title">Результаты</div>
+      <div id="risk-card" class="risk-card"></div>
+
+      <div class="metric-grid">
+        <div class="metric-card"><div class="val" id="m-snow">—</div><div class="lbl">Снег, км²</div></div>
+        <div class="metric-card"><div class="val" id="m-hist">—</div><div class="lbl">Ист. среднее снег, км²</div></div>
+        <div class="metric-card"><div class="val" id="m-water">—</div><div class="lbl">Вода после, км²</div></div>
+        <div class="metric-card"><div class="val" id="m-flood">—</div><div class="lbl">Новое затопление, км²</div></div>
+        <div class="metric-card"><div class="val" id="m-melt">—</div><div class="lbl">Таяние, км²/день</div></div>
+      </div>
+
+      <div id="chart-section" style="display:none">
+        <div class="section-title">История по годам</div>
+        <div class="chart-wrap"><canvas id="chart-snow"></canvas></div>
+        <div class="chart-wrap" style="margin-top:8px"><canvas id="chart-flood"></canvas></div>
+      </div>
+
+      <div class="section-title">Факторы риска</div>
+      <ul class="factor-list" id="factor-list"></ul>
+
+      <div class="section-title">Использованные снимки</div>
+      <ul class="condition-list" id="scenes-list"></ul>
+    </div>
+
+  </div>
+</div>
+
+<!-- Map -->
+<div id="map"></div>
+
+<!-- Legend -->
+<div id="legend" style="display:none">
+  <div class="leg-title">Легенда</div>
+  <label class="leg-item">
+    <input type="checkbox" id="chk-snow"  checked onchange="toggleLayer('snow')" />
+    <div class="swatch" style="background:rgba(79,126,248,0.5)"></div> Снег
+  </label>
+  <label class="leg-item">
+    <input type="checkbox" id="chk-water" checked onchange="toggleLayer('water')" />
+    <div class="swatch" style="background:rgba(6,182,212,0.5)"></div> Вода
+  </label>
+  <label class="leg-item">
+    <input type="checkbox" id="chk-flood" checked onchange="toggleLayer('flood')" />
+    <div class="swatch" style="background:rgba(220,38,38,0.6)"></div> Новое затопление
+  </label>
+</div>
+
+<!-- Libraries -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/geotiff@2.1.3/dist-browser/geotiff.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/proj4@2.9.0/dist/proj4.js"></script>
+
+<!-- App modules (порядок важен) -->
+<script src="static/js/stac.js"></script>
+<script src="static/js/bands.js"></script>
+<script src="static/js/indices.js"></script>
+<script src="static/js/masks.js"></script>
+<script src="static/js/area.js"></script>
+<script src="static/js/flood.js"></script>
+<script src="static/js/risk.js"></script>
+<script src="static/js/temperature.js"></script>
+<script src="static/js/history.js"></script>
+<script src="static/js/render.js"></script>
+<script src="static/js/app.js"></script>
+
+</body>
+</html>
