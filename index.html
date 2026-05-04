@@ -80,9 +80,10 @@
       </div>
     </div>
 
-    <button id="btn-analyze" disabled onclick="runAnalysis()">Выбрать область на карте</button>
-    <button id="btn-rgb"     disabled onclick="loadRgb()">Показать RGB-снимок</button>
-    <button id="btn-csv"     disabled onclick="exportCsv()">Скачать CSV</button>
+    <button id="btn-analyze"  disabled onclick="runAnalysis()">Выбрать область на карте</button>
+    <button id="btn-rgb"      disabled onclick="loadRgb()">Показать RGB-снимок</button>
+    <button id="btn-csv"      disabled onclick="exportCsv()">Скачать CSV</button>
+    <button id="btn-geotiff"  disabled onclick="exportGeoTiffClick()">Скачать GeoTIFF</button>
 
     <div id="loader">
       <div class="spinner"></div>
@@ -156,6 +157,7 @@
 <script src="static/js/temperature.js"></script>
 <script src="static/js/history.js"></script>
 <script src="static/js/render.js"></script>
+<script src="static/js/export.js"></script>
 <script src="static/js/app.js"></script>
 
 </body>

@@ -17,6 +17,7 @@ map.addControl(drawControl);
 
 let bbox = null;
 let lastResult = null;
+let exportItem = null;
 let snowLayer = null, waterLayer = null, floodLayer = null, rgbLayer = null;
 
 // ── Draw events ───────────────────────────────────────────────────────────────
@@ -121,6 +122,8 @@ async function runAnalysis() {
         if (!beforeItem) throw new Error(`Нет снимков около даты ${dateBefore}`);
         if (!afterItem)  throw new Error(`Нет снимков около даты ${dateAfter}`);
 
+        exportItem = afterItem;
+
         // 2. загрузка каналов параллельно
         const [snowBands, beforeBands, afterBands, snowAfterBands] = await Promise.all([
             loadBands(snowItem,      bbox),
@@ -199,6 +202,7 @@ async function runAnalysis() {
         document.getElementById("legend").style.display = "block";
         document.getElementById("results").style.display = "block";
         document.getElementById("btn-csv").disabled = false;
+        document.getElementById("btn-geotiff").disabled = false;
 
     } catch (e) {
         showError(e.message);
@@ -296,6 +300,9 @@ function resetUI() {
     document.getElementById("btn-analyze").textContent = "Выбрать область на карте";
     document.getElementById("btn-rgb").disabled = true;
     document.getElementById("btn-csv").disabled = true;
+    document.getElementById("btn-geotiff").disabled = true;
+    document.getElementById("btn-geotiff").textContent = "Скачать GeoTIFF";
+    exportItem = null;
     document.getElementById("temp-chip").style.display = "none";
     document.getElementById("temp-forecast").value = "";
     document.getElementById("legend").style.display = "none";
@@ -399,3 +406,19 @@ function showError(msg) {
 }
 function hideError()   { document.getElementById("error-msg").style.display = "none"; }
 function hideResults() { document.getElementById("results").style.display = "none"; }
+
+async function exportGeoTiffClick() {
+    if (!exportItem || !bbox) return;
+    const btn = document.getElementById("btn-geotiff");
+    btn.disabled = true;
+    btn.textContent = "Загрузка каналов…";
+    try {
+        const n = await downloadGeoTiff(exportItem, bbox);
+        btn.textContent = `GeoTIFF скачан (${n} каналов)`;
+    } catch (e) {
+        showError("Ошибка GeoTIFF: " + e.message);
+        btn.textContent = "Скачать GeoTIFF";
+    } finally {
+        btn.disabled = false;
+    }
+}
